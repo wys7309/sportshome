@@ -9,44 +9,54 @@ const __dirname = path.dirname(__filename);
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = process.env.PORT || 3000;
+  const isProd = process.env.NODE_ENV === "production";
 
-  // 1. Vite 데브 서버 생성
-  const vite = await createViteServer({
-    server: { 
-      middlewareMode: true,
-      host: '0.0.0.0',
-      hmr: false // 프록시 환경에서 안정성을 위해 HMR 비활성화
-    },
-    appType: "spa",
-  });
+  let vite: any;
+  if (!isProd) {
+    // 개발 모드 (AI Studio 미리보기용)
+    vite = await createViteServer({
+      server: { 
+        middlewareMode: true,
+        host: '0.0.0.0',
+        hmr: false 
+      },
+      appType: "spa",
+    });
+    app.use(vite.middlewares);
+  } else {
+    // 프로덕션 모드 (외부 배포용)
+    // 빌드된 정적 파일 서빙 (dist 폴더)
+    app.use(express.static(path.resolve(__dirname, "dist")));
+  }
 
-  // 2. Vite 미들웨어 사용
-  app.use(vite.middlewares);
-
-  // 3. API 라우트 (필요 시)
+  // API 라우트
   app.get("/api/health", (req, res) => {
     res.json({ status: "ok" });
   });
 
-  // 4. 모든 요청에 대해 index.html 반환 (SPA 라우팅 보장)
+  // 모든 요청에 대해 index.html 반환 (SPA 라우팅 보장)
   app.use("*", async (req, res, next) => {
     const url = req.originalUrl;
     try {
-      // index.html 읽기
-      let template = fs.readFileSync(path.resolve(__dirname, "index.html"), "utf-8");
-      // Vite를 통해 HTML 변환 (스크립트 주소 등 처리)
-      template = await vite.transformIndexHtml(url, template);
-      // 응답 전송
+      let template: string;
+      if (!isProd) {
+        // 개발 모드: 원본 index.html 읽기 및 Vite 변환
+        template = fs.readFileSync(path.resolve(__dirname, "index.html"), "utf-8");
+        template = await vite.transformIndexHtml(url, template);
+      } else {
+        // 프로덕션 모드: 빌드된 dist/index.html 읽기
+        template = fs.readFileSync(path.resolve(__dirname, "dist/index.html"), "utf-8");
+      }
       res.status(200).set({ "Content-Type": "text/html" }).end(template);
     } catch (e) {
-      vite.ssrFixStacktrace(e as Error);
+      if (!isProd) vite.ssrFixStacktrace(e as Error);
       next(e);
     }
   });
 
-  app.listen(PORT, "0.0.0.0", () => {
-    console.log(`🚀 Server is running on http://0.0.0.0:${PORT}`);
+  app.listen(Number(PORT), "0.0.0.0", () => {
+    console.log(`🚀 Server is running on port ${PORT} (Mode: ${isProd ? 'Production' : 'Development'})`);
   });
 }
 
